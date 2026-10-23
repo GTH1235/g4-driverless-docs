@@ -1,0 +1,1622 @@
+jQuery(document).ready(function($){
+	
+	var filter_group = $('.wcf-filter-group');
+	var global_timeout_notif = 0;
+	var curr_taxonomy = '';
+	var product_count = '';
+
+	// WCF 1 exposes products_count; WCF 2 leaves Product Table/DataTables as the
+	// result-count owner and does not provide that legacy property.
+	if(!(window.cims_wcf_compat && window.cims_wcf_compat.is_v2) && typeof WCF_Frontend !== 'undefined') {
+		var curr_taxonomy = WCF_Frontend.current_taxonomy.term_id? WCF_Frontend.current_taxonomy.term_id :false;
+		var product_count = WCF_Frontend.products_count? WCF_Frontend.products_count :false;
+	}
+
+	$.urlParam = function(name){
+		var results = new RegExp('[\?&]' + name + '=([^&#]*)').exec(window.location.href);
+		if (results==null) {
+		   return null;
+		}
+		return decodeURI(results[1]) || 0;
+	}	
+
+	// IMS FILTER-NATIVE (2026-06-07): run a callback once the WCF filter UI has
+	// rendered (or after a short cap), used only for lightweight UX/width
+	// housekeeping now that Barn2 drives filtering + narrowing natively. This was
+	// previously referenced but its definition went missing, throwing a
+	// ReferenceError on _wcf_filter page load and on every filter click (the
+	// "nothing happens / huge delay" symptom). Defined defensively so a missing
+	// callback or jQuery context can never break the page.
+	function cimsRunWhenFilterReady(cb, maxWaitMs, intervalMs) {
+		if (typeof cb !== 'function') { return; }
+		maxWaitMs = (typeof maxWaitMs === 'number') ? maxWaitMs : 1500;
+		intervalMs = (typeof intervalMs === 'number') ? intervalMs : 100;
+		var waited = 0;
+		function _ready() {
+			try {
+				if (!$('.wcf-group-wrapper, .wcf-group').length) { return false; }
+				if (!$('.wcf-filter-form, .wcf-filter, .wcf-filter-group').length) { return false; }
+				return true;
+			} catch (e) { return true; }
+		}
+		(function _tick(){
+			var done = false;
+			try { done = _ready(); } catch (e) { done = true; }
+			if (done || waited >= maxWaitMs) {
+				try { cb(); } catch (e) { if (window.console) { console.error('cimsRunWhenFilterReady cb error', e); } }
+				return;
+			}
+			waited += intervalMs;
+			setTimeout(_tick, intervalMs);
+		})();
+	}
+	
+
+	// IMS PATCH (2026-05-07): render safe <sub>/<sup> markup in WCF filter labels.
+	// WCF decodes the DB label string and React renders it as text; only these exact
+	// allowlisted scientific labels are converted to DOM nodes after WCF renders.
+	var _filter_safe_subsup_label_fragments = {
+		'M<sub>t</sub>': [ { text: 'M' }, { tag: 'sub', text: 't' } ],
+		'M&lt;sub&gt;t&lt;/sub&gt;': [ { text: 'M' }, { tag: 'sub', text: 't' } ],
+		'F<sub>ax</sub>': [ { text: 'F' }, { tag: 'sub', text: 'ax' } ],
+		'F&lt;sub&gt;ax&lt;/sub&gt;': [ { text: 'F' }, { tag: 'sub', text: 'ax' } ]
+	};
+
+	function _filter_append_safe_subsup_fragment(fragment, parts) {
+		for (var i = 0; i < parts.length; i++) {
+			var part = parts[i];
+			if (part.tag) {
+				var el = document.createElement(part.tag);
+				el.textContent = part.text;
+				fragment.appendChild(el);
+			} else {
+				fragment.appendChild(document.createTextNode(part.text));
+			}
+		}
+	}
+
+	function _filter_find_next_safe_subsup_token(text, start) {
+		var best = null;
+		Object.keys(_filter_safe_subsup_label_fragments).forEach(function(token){
+			var index = text.indexOf(token, start);
+			if (index === -1) {
+				return;
+			}
+			if (!best || index < best.index || (index === best.index && token.length > best.token.length)) {
+				best = { index: index, token: token };
+			}
+		});
+		return best;
+	}
+
+	function _filter_replace_safe_subsup_text_node(text_node) {
+		if (!text_node || !text_node.nodeValue) {
+			return false;
+		}
+
+		var parent = text_node.parentNode;
+		if (!parent || /^(SCRIPT|STYLE|TEXTAREA|INPUT|SELECT|OPTION)$/i.test(parent.nodeName)) {
+			return false;
+		}
+
+		var text = text_node.nodeValue;
+		var next = _filter_find_next_safe_subsup_token(text, 0);
+		if (!next) {
+			return false;
+		}
+
+		var fragment = document.createDocumentFragment();
+		var cursor = 0;
+		while (next) {
+			if (next.index > cursor) {
+				fragment.appendChild(document.createTextNode(text.slice(cursor, next.index)));
+			}
+			_filter_append_safe_subsup_fragment(fragment, _filter_safe_subsup_label_fragments[next.token]);
+			cursor = next.index + next.token.length;
+			next = _filter_find_next_safe_subsup_token(text, cursor);
+		}
+		if (cursor < text.length) {
+			fragment.appendChild(document.createTextNode(text.slice(cursor)));
+		}
+
+		parent.replaceChild(fragment, text_node);
+		return true;
+	}
+
+	function _filter_render_safe_subsup_markup(timeout) {
+		timeout = parseInt(timeout, 10) || 0;
+		setTimeout(function(){
+			var roots = document.querySelectorAll('.wcf-filter-form, .wcf-filter-group, .wcf-active-filters, .wcf-dropdown-wrapper, [role="listbox"]');
+			if (!roots.length) {
+				return;
+			}
+
+			Array.prototype.forEach.call(roots, function(root){
+				var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+					acceptNode: function(node) {
+						return _filter_find_next_safe_subsup_token(node.nodeValue || '', 0) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+					}
+				});
+
+				var nodes = [];
+				while (walker.nextNode()) {
+					nodes.push(walker.currentNode);
+				}
+				nodes.forEach(_filter_replace_safe_subsup_text_node);
+			});
+		}, timeout);
+	}
+
+	var _filter_safe_subsup_observer = null;
+	function _filter_bind_safe_subsup_observer() {
+		if (_filter_safe_subsup_observer || typeof MutationObserver === 'undefined' || !document.body) {
+			return;
+		}
+
+		var scheduled = false;
+		_filter_safe_subsup_observer = new MutationObserver(function(){
+			if (scheduled) {
+				return;
+			}
+			scheduled = true;
+			setTimeout(function(){
+				scheduled = false;
+				_filter_render_safe_subsup_markup(0);
+			}, 50);
+		});
+		_filter_safe_subsup_observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+	}
+
+	// Add tooltip to title
+	function _filter_title_tooltip() {
+		// WCF 2 owns its filter-title DOM. Keep this legacy augmentation on WCF 1 only.
+		if ( window.cims_wcf_compat && window.cims_wcf_compat.is_v2 ) {
+			return;
+		}
+		$('.wcf-filter-title img').remove();
+		$('.wcf-filter-title').each(function(){
+			let curr_text = jQuery(this).text();
+				curr_text = curr_text.replace(/^\s+|\s+$/g, ''); // trim
+				curr_text = curr_text.toLowerCase();
+				curr_text = curr_text.replace('.', '-') // replace a dot by a dash 
+						.replace(/[^a-z0-9 -]/g, '') // remove invalid chars
+						.replace(/\s+/g, '-') // collapse whitespace and replace by a dash
+						.replace(/-+/g, '-') // collapse dashes
+						.replace( /\//g, '' ); // collapse all forward-slashes
+				$(this).append(`<img src="/wp-content/plugins/catalog-ims/assets/images/svg/question-mark.svg" data-tooltip="filter_${curr_text}" class="open_tooltip" width="14" alt="This is text"><div id="filter_${curr_text}" class="tooltip_box"></div>`);
+
+		});		
+	}
+	
+	$(window).load(_filter_title_tooltip);
+	$(window).load(function(){
+		_filter_render_safe_subsup_markup(0);
+		_filter_render_safe_subsup_markup(500);
+		_filter_bind_safe_subsup_observer();
+	});
+	
+	// IMS NATIVE 2026-06-07 (audit Y4): removed the dead
+	// `_filter_custom_checked_filter_button` (its body was commented out; live it
+	// only started a do-nothing 1s setInterval poll) and its `!_wcf_filter`
+	// window.load binding. Active-filter chip styling is owned natively by WCF.
+	
+	// CIMS-WCF-AXIOMATIC-FIVE-ROW-SCROLL-01 (2026-07-31): show at most five
+	// complete checkbox rows per attribute, with every remaining choice available by scrolling.
+	// Barn2 owns native ScrollbarsCustom lists; ordinary checkbox lists receive only a scoped
+	// browser scroll class. This changes presentation only, not WCF choice/filter semantics.
+	function _filter_limit_checkbox_display(timeout) {
+		var delay = timeout ? 2000 : 0;
+
+		setTimeout(function(){
+			$('.wcf-filter').each(function(){
+				var $filter = $(this);
+				var $native_scroll_list = $filter.find('.ScrollbarsCustom div[role="list"]').first();
+				var $native_scroll_box = $native_scroll_list.closest('.ScrollbarsCustom');
+
+				// Remove stale legacy markup and restore any rows previously hidden by More+.
+				$filter.find('.filter-more').remove();
+
+				if ( $native_scroll_list.length ) {
+					var $native_rows = $native_scroll_list.children('div');
+					$native_rows.css('display', '');
+					if ( $native_rows.length > 5 ) {
+						var native_row_height = Math.ceil($native_rows.first().outerHeight(true));
+						if ( native_row_height > 0 ) {
+							$native_scroll_box.css('--cims-filter-row-height', native_row_height + 'px');
+						}
+						$native_scroll_box.addClass('cims-five-row-native-scroll');
+					} else {
+						$native_scroll_box.removeClass('cims-five-row-native-scroll').css('--cims-filter-row-height', '');
+					}
+					$native_scroll_list.addClass('active');
+					return;
+				}
+
+				var $wcf2CheckboxGroup = $filter.find('[role="group"].wcf-checkbox-group').first();
+				if ( $wcf2CheckboxGroup.length ) {
+					var $wcf2Rows = $wcf2CheckboxGroup.children('label.wcf-checkbox-item');
+					if ( $wcf2Rows.length > 5 ) {
+						// WCF 2's Radix group adds a separate flex gap. Its rendered row
+						// height alone is therefore not its visual step and cannot safely
+						// determine a five-row viewport. The scoped WCF 2 CSS owns the
+						// compact 30px row geometry and 150px long-list viewport; retain
+						// only this semantic class for older browser fallback paths.
+						$wcf2CheckboxGroup.addClass('cims-five-row-scroll').css('--cims-filter-row-height', '');
+					} else {
+						$wcf2CheckboxGroup.removeClass('cims-five-row-scroll').css('--cims-filter-row-height', '');
+					}
+					return;
+				}
+
+				var $list = $filter.find('div[role="list"]').first();
+				if ( !$list.length ) {
+					return;
+				}
+				var $rows = $list.children('div');
+				$rows.css('display', '');
+				if ( $rows.length > 5 ) {
+					var row_height = Math.ceil($rows.first().outerHeight(true));
+					if ( row_height > 0 ) {
+						$list.css('--cims-filter-row-height', row_height + 'px');
+					}
+					$list.addClass('cims-five-row-scroll');
+				} else {
+					$list.removeClass('cims-five-row-scroll').css('--cims-filter-row-height', '');
+				}
+				$list.addClass('active');
+			});
+		}, delay);
+	}
+
+	
+	$(window).load(_filter_limit_checkbox_display);
+	
+	// Fix checked filter button click
+	function _filter_button_click(timeout) {
+		$(document).on("click", ".wcf-active-filter svg", function(){
+			// $('.wcf-active-filters .wcf-active-filter em').remove();
+			_filter_limit_checkbox_display(3000);				
+		});		
+	}
+	
+	$(window).load(_filter_button_click);
+
+	// CIMS-WCF-TABLE-WIDTH-01 (2026-06-03): keep Barn2 Product Table
+	// column widths stable after WCF filters redraw/reinitialize the table.
+	var _filter_product_table_widths = null;
+	// CIMS-WCF-TABLE-WIDTH-03 (2026-06-05): track how authoritative the cached
+	// widths are (2 = declared data-width, 1 = deterministic reconstruction) so a
+	// provisional capture can be upgraded by a later clean one and a bad capture
+	// never sticks until a manual refresh.
+	var _filter_product_table_widths_source = 0;
+
+	function _filter_parse_width_percent(width) {
+		if ( typeof width === 'undefined' || width === null ) {
+			return 0;
+		}
+		var parsed = parseFloat(String(width).replace('%', ''));
+		return isNaN(parsed) || parsed <= 0 ? 0 : parsed;
+	}
+
+	// CIMS-WCF-TABLE-WIDTH-03 (2026-06-05): the server emits a deterministic
+	// per-column width scheme (functions.php wc_product_table_args: the SKU/Item #
+	// column gets catalog_ims_product_table_sku_width, default 15%, and the
+	// remaining width is split evenly across the other columns, with
+	// auto_width=false). Mirror that exact value here so the JS reconstruction
+	// matches the server render. An optional JS override (WCF_Frontend or a global)
+	// keeps the two in sync if the server filter value ever changes.
+	function _filter_get_sku_width_percent() {
+		var sku_width = 15;
+		if ( typeof WCF_Frontend !== 'undefined' && WCF_Frontend && parseFloat(WCF_Frontend.cims_product_table_sku_width) > 0 ) {
+			sku_width = parseFloat(WCF_Frontend.cims_product_table_sku_width);
+		} else if ( typeof cims_product_table_sku_width !== 'undefined' && parseFloat(cims_product_table_sku_width) > 0 ) {
+			sku_width = parseFloat(cims_product_table_sku_width);
+		}
+		if ( sku_width <= 0 ) { sku_width = 15; }
+		if ( sku_width >= 95 ) { sku_width = 95; }
+		return sku_width;
+	}
+
+	// CIMS-WCF-TABLE-WIDTH-03 (2026-06-05): reconstruct the deterministic server
+	// width scheme from the column set (SKU column fixed %, the rest split evenly)
+	// instead of measuring a possibly-filtered AJAX-injected table.
+	function _filter_compute_deterministic_widths(headers) {
+		var count = headers.length;
+		if ( count <= 0 ) {
+			return false;
+		}
+		if ( count === 1 ) {
+			headers[0].percent = 100;
+			return true;
+		}
+
+		var sku_index = -1;
+		headers.forEach(function(header){
+			if ( sku_index === -1 && String(header.name).toLowerCase() === 'sku' ) {
+				sku_index = header.index;
+			}
+		});
+		if ( sku_index === -1 ) {
+			sku_index = headers[0].index;
+		}
+
+		var sku_width = _filter_get_sku_width_percent();
+		var other_width = Math.max(0, 100 - sku_width) / Math.max(1, count - 1);
+		headers.forEach(function(header){
+			header.percent = ( header.index === sku_index ) ? sku_width : other_width;
+		});
+		return true;
+	}
+
+	function _filter_capture_product_table_widths(force) {
+		var $table = $('.wc-product-table:visible').first();
+		if ( !$table.length ) {
+			$table = $('.wc-product-table').first();
+		}
+		if ( !$table.length ) {
+			return;
+		}
+
+		var headers = [];
+		$table.find('thead th').each(function(index){
+			var $th = $(this);
+			var data_width = $th.attr('data-width') || '';
+			headers.push({
+				index: index,
+				name: $th.attr('data-name') || '',
+				data_width: data_width,
+				data_percent: _filter_parse_width_percent(data_width)
+			});
+		});
+
+		if ( !headers.length ) {
+			return;
+		}
+
+		// CIMS-WCF-TABLE-WIDTH-03 (2026-06-05): width source priority is
+		// declared data-width -> deterministic reconstruction. The measured-pixel
+		// fallback that CIMS-WCF-TABLE-WIDTH-02 still relied on (when a table had no
+		// usable declared widths and _wcf_filter was absent) is removed: macro
+		// parent pages render no table on initial load, so the FIRST filter injects
+		// the table via AJAX with no _wcf_filter in the URL, and measuring that
+		// already-filtered table pinned the wrong proportions until a manual
+		// refresh. Reconstructing the deterministic server scheme yields the same
+		// widths as the refreshed/server-rendered table, so the first filter is now
+		// correct without a refresh.
+		var declared_percent_total = 0;
+		var declared_count = 0;
+		headers.forEach(function(header){
+			if ( header.data_percent > 0 ) {
+				declared_percent_total += header.data_percent;
+				declared_count += 1;
+			}
+		});
+		var has_declared_widths = ( declared_count >= ( headers.length - 1 ) )
+			&& declared_percent_total >= 90
+			&& declared_percent_total <= 110;
+
+		var source;
+		if ( has_declared_widths ) {
+			headers.forEach(function(header){
+				header.percent = header.data_percent;
+			});
+			source = 2; // declared data-width (authoritative)
+		} else if ( _filter_compute_deterministic_widths(headers) ) {
+			source = 1; // deterministic reconstruction of the server scheme
+		} else {
+			return;
+		}
+
+		var percent_total = 0;
+		headers.forEach(function(header){
+			percent_total += header.percent || 0;
+		});
+		if ( percent_total <= 0 ) {
+			return;
+		}
+
+		// Only overwrite when this capture is at least as authoritative as the
+		// cached one (declared > deterministic), when forced, or when the table
+		// column count changed. This upgrades an early provisional capture once a
+		// clean declared capture is available and stops a stale bad capture from
+		// sticking until a manual refresh, while never downgrading good declared
+		// widths to a provisional reconstruction.
+		var should_store = force
+			|| !_filter_product_table_widths
+			|| !_filter_product_table_widths.length
+			|| ( _filter_product_table_widths.length !== headers.length )
+			|| ( source >= _filter_product_table_widths_source );
+
+		if ( should_store ) {
+			_filter_product_table_widths = headers;
+			_filter_product_table_widths_source = source;
+		}
+	}
+
+	function _filter_apply_product_table_widths(timeout) {
+		timeout = parseInt(timeout, 10) || 0;
+		setTimeout(function(){
+			// CIMS-WCF-TABLE-WIDTH-03 (2026-06-05): always re-run capture (non-forced)
+			// so a provisional deterministic capture is upgraded once a clean declared
+			// capture is available, and a transient/bad early capture cannot stick until
+			// a manual refresh. The capture's own source/column-count guard prevents it
+			// from downgrading good declared widths.
+			_filter_capture_product_table_widths(false);
+			if ( !_filter_product_table_widths ) {
+				return;
+			}
+
+			$('.wc-product-table').each(function(){
+				var $table = $(this);
+				if ( !$table.length ) {
+					return;
+				}
+				// CIMS-WCF-TABLE-WIDTH-04 (Y3, 2026-06-07): the colgroup + per-cell
+				// width pin is now the single shared cimsApplyTableWidths(), reused by
+				// both the leaf path (here, doAdjust=true) and the macro path
+				// (window.cimsLockProductTableWidths, doAdjust=false). Behaviour
+				// unchanged from the prior inline loop.
+				cimsApplyTableWidths($table, _filter_product_table_widths, true);
+			});
+		}, timeout);
+	}
+
+	// CIMS-WCF-TABLE-WIDTH-04 (Y3, 2026-06-07): single shared colgroup + per-cell
+	// width applier. Extracted verbatim from the prior leaf
+	// _filter_apply_product_table_widths inner loop and the macro template's
+	// cimsLockMacroTableWidths inner loop, which were duplicates. doAdjust mirrors the
+	// only prior difference between them: the leaf path called DataTables
+	// columns.adjust(); the macro path intentionally did not (it fights
+	// table-layout:fixed).
+	function cimsApplyTableWidths($table, headers, doAdjust) {
+		if ( !$table || !$table.length || !headers || !headers.length ) {
+			return;
+		}
+
+		// CIMS-WCF-CHIP-FLICKER-FIX-01 (2026-06-07): only rewrite the colgroup when it
+		// actually changes. The remove()+prepend() below is a childList mutation on the
+		// table, which sits inside .product_table_wrap_new -- the node watched by TWO
+		// MutationObserver(childList+subtree) handlers in the macro template (one re-queues
+		// THIS width lock, one re-renders the active-filter chips). Unconditionally
+		// rewriting the colgroup re-triggered both observers, which re-ran the width lock,
+		// which rewrote the colgroup... a ~120ms self-sustaining loop that tore down and
+		// rebuilt the chip buttons ~8x/sec (visible flicker; the chip X was unclickable
+		// because the button was recreated mid-click). Skipping the no-op rewrite breaks
+		// the loop at its source. Per-cell width pins (attribute writes) and the optional
+		// columns.adjust() are NOT childList mutations, so they stay unconditional below.
+		var widthSig = headers.map(function(header){
+			return Math.max(header.percent || 0, 1).toFixed(4);
+		}).join('|');
+
+		var colgroup = '<colgroup class="cims-wcf-product-table-widths" data-cims-width-sig="' + widthSig + '">';
+		headers.forEach(function(header){
+			var width = Math.max(header.percent || 0, 1).toFixed(4) + '%';
+			colgroup += '<col style="width:' + width + ';" />';
+		});
+		colgroup += '</colgroup>';
+
+		var $existingColgroup = $table.children('colgroup.cims-wcf-product-table-widths');
+		var colgroupUnchanged = $existingColgroup.length === 1
+			&& $existingColgroup.attr('data-cims-width-sig') === widthSig
+			&& $existingColgroup.children('col').length === headers.length;
+
+		if ( ! colgroupUnchanged ) {
+			$existingColgroup.remove();
+			$table.prepend(colgroup);
+		}
+		$table.addClass('cims-wcf-table-width-locked');
+
+
+		headers.forEach(function(header){
+			var width = Math.max(header.percent || 0, 1).toFixed(4) + '%';
+			$table.find('thead th').eq(header.index).css({
+				'width': width,
+				'min-width': width,
+				'max-width': width
+			});
+			$table.find('tbody tr').each(function(){
+				$(this).children('td').eq(header.index).css({
+					'width': width,
+					'min-width': width,
+					'max-width': width
+				});
+			});
+		});
+
+		if ( doAdjust ) {
+			try {
+				if ( $.fn.dataTable && $.fn.dataTable.isDataTable($table) ) {
+					$table.DataTable().columns.adjust();
+				}
+			} catch(e) {}
+		}
+	}
+
+	// CIMS-WCF-TABLE-WIDTH-04 (Y3, 2026-06-07): per-table declared-or-reconstruct
+	// width computation, moved here from the macro template (cimsComputeMacroColumnWidths)
+	// so the macro and leaf width-locks share one source of truth. Prefer each <th>'s
+	// declared data-width when present on all-but-one column and summing to ~100%;
+	// otherwise reconstruct the deterministic server scheme via
+	// _filter_compute_deterministic_widths (SKU/Item # = _filter_get_sku_width_percent(),
+	// default 15%, the rest split evenly). The macro copy previously hard-coded 12%;
+	// routing through _filter_get_sku_width_percent() is identical at the default and
+	// keeps the two in sync if catalog_ims_product_table_sku_width ever changes.
+	function cimsComputeTableWidthHeaders($table) {
+		var headers = [];
+		$table.find('thead th').each(function(index){
+			var $th = $(this);
+			var declared = $th.attr('data-width') || $th.attr('width') || '';
+			var pct = parseFloat(String(declared).replace('%', ''));
+			headers.push({
+				index: index,
+				name: $th.attr('data-name') || '',
+				percent: ( !isNaN(pct) && pct > 0 ) ? pct : 0
+			});
+		});
+		if ( !headers.length ) {
+			return headers;
+		}
+
+		var declared_count = 0, declared_total = 0;
+		headers.forEach(function(header){
+			if ( header.percent > 0 ) { declared_count++; declared_total += header.percent; }
+		});
+		var has_declared = ( declared_count >= ( headers.length - 1 ) )
+			&& declared_total >= 90 && declared_total <= 110;
+		if ( ! has_declared ) {
+			if ( ! _filter_compute_deterministic_widths(headers) ) {
+				return [];
+			}
+		}
+		return headers;
+	}
+
+	// CIMS-WCF-TABLE-WIDTH-04 (Y3, 2026-06-07): public macro entry point. The macro
+	// template (taxonomy-product_cat.php) now calls this instead of carrying its own
+	// duplicate colgroup/lock implementation. Scoped to the macro results table by
+	// default; doAdjust is false to match the macro's table-layout:fixed requirement.
+	window.cimsLockProductTableWidths = function(scope){
+		var selector = scope || '.cims-macro-filter-results table.wc-product-table';
+		$(selector).each(function(){
+			var $table = $(this);
+			var headers = cimsComputeTableWidthHeaders($table);
+			if ( !headers.length ) {
+				return;
+			}
+			cimsApplyTableWidths($table, headers, false);
+		});
+	};
+
+
+	// CIMS-WCF-FILTER-UX-01 (2026-06-03): preserve Barn2/WCF's native
+	// active-filter chips/reset UI. The previous integration removed
+	// #wcf-sorting-bar, which is the React mount that renders selected filter
+	// tags and reset/remove controls above Product Table results.
+	function _filter_get_clean_reset_url() {
+		if ( typeof WCF_Frontend !== 'undefined' && WCF_Frontend.base_search_url ) {
+			return WCF_Frontend.base_search_url;
+		}
+
+		if ( typeof cims_current_url !== 'undefined' && cims_current_url ) {
+			return String(cims_current_url).split('?')[0].split('#')[0];
+		}
+
+		return window.location.origin + window.location.pathname;
+	}
+
+	function _filter_preserve_wcf_filter_ux() {
+		var $sorting_bar = $('#wcf-sorting-bar');
+		if ( !$sorting_bar.length ) {
+			return;
+		}
+
+		$sorting_bar.addClass('cims-wcf-filter-ux-active');
+		$sorting_bar.find('.wcf-results-count, .wcf-pool-drawer').addClass('cims-wcf-native-pool-hidden');
+		$sorting_bar.toggleClass(
+			'cims-wcf-has-active-filters',
+			$sorting_bar.find('.wcf-active-filter').length > 0 || !!$.urlParam('_wcf_filter')
+		);
+	}
+
+	var _filter_active_ux_observer = null;
+	function _filter_bind_active_filter_ux_observer() {
+		if ( _filter_active_ux_observer || typeof MutationObserver === 'undefined' || !document.body ) {
+			return;
+		}
+
+		var scheduled = false;
+		_filter_active_ux_observer = new MutationObserver(function(mutations){
+			var relevant = false;
+			for ( var i = 0; i < mutations.length; i++ ) {
+				var target = mutations[i].target;
+				if ( !target || target.nodeType !== 1 ) {
+					continue;
+				}
+
+				var $target = $(target);
+				if ( $target.closest('#wcf-sorting-bar, .wcf-active-filters, .wcf-filter-form').length || $target.find('#wcf-sorting-bar, .wcf-active-filters, .wcf-active-filter').length ) {
+					relevant = true;
+					break;
+				}
+			}
+
+			if ( !relevant || scheduled ) {
+				return;
+			}
+
+			scheduled = true;
+			setTimeout(function(){
+				scheduled = false;
+				_filter_preserve_wcf_filter_ux();
+				_filter_refresh_by(0);
+				_filter_render_safe_subsup_markup(0);
+				_filter_apply_product_table_widths(0);
+			}, 100);
+		});
+		_filter_active_ux_observer.observe(document.body, { childList: true, subtree: true });
+	}
+
+	// Refresh filter
+	function _filter_refresh_by(timeout) {
+		if( typeof timeout === 'undefined' ) {
+			timeout = 2000;
+		} else {
+			timeout = parseInt(timeout, 10) || 0;
+		}
+
+		setTimeout(function(){
+			_filter_preserve_wcf_filter_ux();
+			var count = $('.wcf-active-filter, .wcf-active-filter-badge').length;
+			$('.tile_filter p span').remove();
+			$('.tile_filter p').append('<span class="filter-counter" style="display:none">(<span></span>)</span>');
+
+			$('.tile_filter p .filter-clear-all').remove();
+			if( count > 0 ) {		
+				$('.filter-counter span').text(count);
+				$('.filter-counter').show();
+				$('.tile_filter p').append('<a class="filter-clear-all cims-wcf-reset-all" href="'+_filter_get_clean_reset_url()+'">Reset filters</a>');
+			}
+		}, timeout);	
+	}	
+	
+	$(window).load(_filter_refresh_by);
+	
+	// Refresh info
+	function _filter_refresh_info(timeout) {
+		if ( window.cims_wcf_compat && window.cims_wcf_compat.is_v2 ) {
+			return;
+		}
+		if( timeout ) {
+			timeout = 2000;
+		}
+
+		setTimeout(function(){
+			var count = 0;
+			$('.wc-product-table tbody>tr').each(function(){count += 1;});
+			$('.dataTables_info').html(product_count +` ${global_part_text} (<span class="displayed-counter"></span>&nbsp;Displayed)`);
+			$('.displayed-counter').text(count);
+			$('.cgims-extra-options-part-counter').html('<span>'+product_count+`</span> ${global_part_text}`);
+		}, timeout);	
+	}	
+	
+	//$(window).load(_filter_refresh_info);	
+	
+	// IMS NATIVE 2026-06-07 (audit Y4): one idempotent post-render housekeeping pass.
+	// Replaces the setTimeout-chained re-render ladders that raced Barn2's React /
+	// DataTables redraw. Every step is safe to run repeatedly, so it can bind directly
+	// to Barn2's public events and fire exactly when the DOM is ready. It does NOT touch
+	// the dataTables_info / part-counter line (the existing draw.dt handler owns that),
+	// the width-lock internals (Y3), or the macro chip engine (Y5).
+	function _filter_post_render_housekeeping() {
+		_filter_preserve_wcf_filter_ux();
+		_filter_apply_product_table_widths(0);
+		_filter_refresh_by(0);
+		_filter_title_tooltip(0);
+		_filter_render_safe_subsup_markup(0);
+		_filter_limit_checkbox_display(0);
+		$('#cgims-show').val("25");
+		$('.multi-cart-check input[type=hidden]').attr('type', 'checkbox');
+		var $cims_show_count = $('.wc-product-table-below select');
+		if ( $cims_show_count.length && !$cims_show_count.children('option[value="5"]').length ) {
+			$cims_show_count.prepend('<option value="5">5</option>');
+		}
+	}
+
+	// IMS NATIVE 2026-06-07 (audit Y4): bind the housekeeping to Barn2's own public
+	// events instead of setTimeout ladders. draw.wcpt is fired by WPT after every table
+	// draw (filter reload / paginate / sort / show-count); wcpf.filteringDone is fired
+	// by WCF when a filter request completes. Delegated on document so it also catches
+	// the AJAX-injected macro table. wp.hooks is feature-detected so a WCF build change
+	// can never throw here.
+	$(document).on('draw.wcpt', '.wc-product-table', function(){
+		_filter_post_render_housekeeping();
+		$('.inside-filter').stop(true).fadeTo(100,1);
+	});
+	// CIMS-WCF-2-WPT-PAGINATION-01: WCF's rendered Product Table payload carries
+	// pageLength as a string (for example "25"). DataTables 1.13 then concatenates
+	// it while advancing pages ("0" + "25" -> "025"), leaving page two on the
+	// first rows and dereferencing a missing row. Normalize every WCF-initialized
+	// Catalog IMS category table once WPT has completed its own initialization.
+	$(document).on('init.dt', 'section.sub_cat_catalog table.wc-product-table', function(){
+		var table = this;
+		setTimeout(function(){
+			if ( !$.fn.dataTable || !$.fn.dataTable.isDataTable(table) ) {
+				return;
+			}
+			try {
+				var dataTable = $(table).DataTable();
+				var currentLength = dataTable.page.len();
+				var numericLength = parseInt(currentLength, 10);
+				if ( numericLength > 0 && currentLength !== numericLength ) {
+					dataTable.page.len(numericLength).draw(false);
+				}
+			} catch (e) {}
+		}, 0);
+	});
+	if ( typeof wp !== 'undefined' && wp.hooks && typeof wp.hooks.addAction === 'function' ) {
+		wp.hooks.addAction('wcpf.filteringDone', 'cims/filter-post-render', function(){
+			_filter_post_render_housekeeping();
+			$('.inside-filter').stop(true).fadeTo(100,1);
+		});
+	}
+	$(document).on('wcf:products:afterRender wcf:url:afterUpdate wcf:url:afterDelete wcf:filter:afterRemoved', function(){
+		setTimeout(function(){
+			_filter_post_render_housekeeping();
+			$('.inside-filter').stop(true).fadeTo(100,1);
+		}, 0);
+	});
+	// WCF 2 dispatches native CustomEvents. Subscribe through the DOM API as
+	// well as jQuery so redraw housekeeping always runs after React portals its
+	// filters/results, URL state, or removed-filter controls.
+	['wcf:products:afterRender', 'wcf:url:afterUpdate', 'wcf:url:afterDelete', 'wcf:filter:afterRemoved'].forEach(function(eventName){
+		document.addEventListener(eventName, function(){
+			setTimeout(function(){
+				_filter_post_render_housekeeping();
+				$('.inside-filter').stop(true).fadeTo(100,1);
+			}, 0);
+		});
+	});
+
+	// General
+	$(window).load(function(){
+		let first_time_load = 1;
+
+		_filter_preserve_wcf_filter_ux();
+		_filter_bind_active_filter_ux_observer();
+		_filter_capture_product_table_widths(false);
+		_filter_apply_product_table_widths(250);
+		_filter_apply_product_table_widths(1000);
+
+		$(document).on('change', '#cgims-sortby', function(){
+			$('th[data-name=name]').click();
+		});		
+		
+		$('.multi-cart-check input[type=hidden]').attr('type', 'checkbox');
+		
+		$('.wc-product-table-below select').prepend('<option value="5">5</option>');
+		
+		if( $.urlParam('_wcf_filter') ) {
+			$('.inside-filter').fadeTo(500,0.1);
+		   
+			// IMS FILTER-NATIVE (2026-06-07): retired the custom greyout AJAX +
+			// label-disabling. Barn2's native counts (inline WCF_Group counts +
+			// /wcf/v1/counters) grey/hide unavailable choices automatically, so we
+			// only restore the sidebar/table UX after the WCF frontend hydrates.
+			cimsRunWhenFilterReady(function(){
+				// IMS NATIVE 2026-06-07 (audit Y4): collapsed the setTimeout-chained
+				// re-render ladder to one idempotent housekeeping pass run once the WCF UI
+				// is ready; draw.wcpt / wcpf.filteringDone re-run it on later draws.
+				$('.dataTables_info').hide();
+				_filter_post_render_housekeeping();
+				$('.inside-filter').fadeTo(100,1);
+				$('.dataTables_info').show();
+			});
+		}
+
+		$(document).on('click', '.cims-wcf-reset-all', function(e){
+			if (window.cims_wcf_compat && window.cims_wcf_compat.is_v2) {
+				e.preventDefault();
+				document.dispatchEvent(new CustomEvent('wcf:filters:clearAll'));
+			}
+		});
+
+		$(document).on('click', '.wcf-active-filter svg', function(){
+			var label = $(this).parents('span').text();
+			setTimeout(function(){
+			$('.wcf-label-item').each(function(){				
+				var lbl = $(this).text();
+				if(label.indexOf(lbl) == -1){
+				
+				} else {
+					var t = $(this);
+					t.prev('input').prop('checked', false);						
+					t.prev('input').removeAttr('checked');
+					t.prev('input').removeAttr('aria-checked');	
+					t.prev('input').addClass('unfilter');
+				}
+			});
+			}, 1500);
+		});
+		
+		$(document).on('mouseenter mouseleave hover', '.wcf-checkbox input.unfilter', function(e){
+			console.log(123);
+			$(this).attr('checked', false);	
+			$(this).removeAttr('checked');
+			$(this).removeAttr('aria-checked');
+		});
+		
+		
+		// Search results
+		if( $('.search-results').length ) {
+			$('.wc-product-table').on( 'draw.dt', function () {
+				var product_count = $('.dataTables_info').text().replace( /[^\d.]/g, '' );
+				$('.multi-cart-check input[type=hidden]').attr('type', 'checkbox');
+				//$('.dataTables_info').html('<span class="total-parts">'+ product_count +'</span>&nbsp;Parts (<span class="displayed-counter"></span>&nbsp;Displayed)');	
+				$('.displayed-counter').text($('.wc-product-table tbody tr').length);		
+				$('.cgims-extra-options-part-counter span').text( product_count );
+			});
+			
+			$(document).on('change', '.multi-cart-check input', function(){
+				var checked = $('.multi-cart-check input:checked').length;
+				if( checked>0 ) {
+					$('.cgims-extra-options-part-counter').html('<span>'+checked+`</span> ${global_part_text} Selected`);
+				} else {
+					$('.cgims-extra-options-part-counter').html('<span>'+ $('.total-parts').text() +`</span> ${global_part_text}`);
+				}
+			});
+		}
+	});
+
+	// IMS FILTER-NATIVE (2026-06-07): retired the custom greyout AJAX +
+	// label-disabling on filter click. Barn2's licensed WCF frontend handles the
+	// filter change itself — it reloads the Product Table (WCF<->WPT integration)
+	// AND returns updated per-choice counts (/wcf/v1/counters) that grey/hide
+	// unavailable choices instantly. This handler now only provides lightweight
+	// visual feedback and re-locks the Product Table column widths after Barn2's
+	// own redraw; it must NOT re-run productTable() or disable labels.
+	$(document).on('click', '.wcf-filter label', function(e){
+		if(!jQuery(this).hasClass('disabled')) {
+
+			_filter_capture_product_table_widths(false);
+			$('.inside-filter').fadeTo(300,0.6);
+
+			// IMS NATIVE 2026-06-07 (audit Y4): the click triggers Barn2's own filter reload;
+			// draw.wcpt / wcpf.filteringDone run the housekeeping + fade the sidebar back
+			// in. This single bounded fallback guarantees the sidebar can never stay
+			// dimmed if neither native event arrives.
+			setTimeout(function(){
+				if ( parseFloat($('.inside-filter').css('opacity')) < 1 ) {
+					_filter_post_render_housekeeping();
+					$('.inside-filter').stop(true).fadeTo(100,1);
+				}
+			}, 2500);
+		}
+	});	
+
+	$(document).on('change', '#cgims-show', function(){
+		var val = $(this).val();
+		$('.wc-product-table-below select').val(val).change();
+		_filter_apply_product_table_widths(100);
+	});		
+	
+	/*$(".wc-product-table").on("init.wcpt", function(f,r){
+		//console.log(r.dataTable.data());
+		//console.log(r.dataTable.data().count());
+		//console.log(r.dataTable.data().rows( { selected: true } ).count());
+		//console.log(r.dataTable.data().length);
+	});*/
+
+	$(".wc-product-table").on("draw.dt", function(f,r){
+		_filter_apply_product_table_widths(0);
+		if( !$('.search-results').length && !(window.cims_wcf_compat && window.cims_wcf_compat.is_v2) ) {
+			$('.dataTables_info').hide();
+			setTimeout(function(){
+				var count = 0;
+				$('.wc-product-table tbody>tr').each(function(){count += 1;});
+				$('.dataTables_info').html('<span class="total-parts">'+ product_count +`</span>&nbsp;${global_part_text} (<span class="displayed-counter"></span>&nbsp;Displayed)`);	
+				$('.displayed-counter').text(count);
+				$('.dataTables_info').show();
+				_filter_apply_product_table_widths(0);
+			
+			}, 100);
+		}
+	});
+
+	$(document).on("click", ".paginate_button", function(f,r){
+		if ( window.cims_wcf_compat && window.cims_wcf_compat.is_v2 ) {
+			return;
+		}
+		$('.dataTables_info').hide();
+		setTimeout(function(){
+			var count = 0;
+			$('.wc-product-table tbody>tr').each(function(){count += 1;});
+			$('.dataTables_info').html('<span class="total-parts">'+ product_count +`</span>&nbsp;${global_part_text} (<span class="displayed-counter"></span>&nbsp;Displayed)`);	
+			$('.displayed-counter').text(count);
+			$('.dataTables_info').show();	
+			_filter_apply_product_table_widths(0);
+		}, 100);
+	});
+
+	$(document).on('change', '.multi-cart-check input[type=checkbox]', function(){
+		var collects = [];
+		
+		$('.multi-cart-form.btn-primary.btn').removeClass('this-product-quote this-product this-quote');
+		
+		$('.multi-cart-check input[type=checkbox]:checked').each(function(){
+			if( $(this).val() != '' ) {
+				collects.push('product');
+			} else {
+				collects.push('quote');
+			}		
+		});	
+
+		if( collects.includes("product") && collects.includes("quote") ) {
+			$('.multi-cart-form.btn-primary.btn').addClass('this-product-quote');
+		} else if( collects.includes("product") ) {
+			$('.multi-cart-form.btn-primary.btn').addClass('this-product');
+		} else if( collects.includes("quote") ) {
+			$('.multi-cart-form.btn-primary.btn').addClass('this-quote');
+		}	
+	});
+
+	$(document).on("click", ".col-action .add-request-quote-button", function(e){
+		$('.modal_notification').removeClass('active');
+		var total = $('.multi-cart-check input:checked').length;
+		if( $(this).hasClass('add-request-quote-button') ) {
+			total = 1;
+		}	
+		setTimeout(function(){
+			$.ajax({
+				url : cims_home_url+woocommerce_params.ajax_url,
+				type : "post",
+				dataType : "html",
+				data : {action: "catalogims_ajax_quote_info", total: total},
+				success: function(data) {
+					$('.modal_notification').html(data).addClass('active');
+					setTimeout(function(){
+						$('.modal_notification').removeClass('active');
+					},10000);					
+				}
+			});		
+		},1000);
+	});
+	
+	$(document).on("click", ".col-action .single_add_to_cart_button", function(e){
+		$('.modal_notification').removeClass('active');
+		var total = $('.multi-cart-check input:checked').length;
+		if( $(this).hasClass('single_add_to_cart_button') ) {
+			total = 1;
+		}		
+		setTimeout(function(){		
+			$.ajax({
+				url : cims_home_url+woocommerce_params.ajax_url,
+				type : "post",
+				dataType : "html",
+				data : {action: "catalogims_ajax_cart_info", total: total},
+				success: function(data) {
+					$('.modal_notification').html(data).addClass('active');
+					setTimeout(function(){
+						$('.modal_notification').removeClass('active');
+					},10000);
+				}
+			});	
+		},1000);
+	});	
+
+	$(document).on('change click', '.multi-cart-check input[type=checkbox]', function(){
+		var count_check = $('.multi-cart-check input[type=checkbox]:checked').length;
+		$('.multi-cart-form .button').val('Add to cart');
+		
+		if( count_check ) {
+			if( $('.wc-product-table-multi-form .btn.custom').length==false ) {
+					$('section.sub_cat_catalog .content-area .wrapper_area .right_area .bottom_area .wc-product-table-wrapper .wc-product-table-controls>div.wc-product-table-multi-form .multi-cart-form,.search-results .wc-product-table-wrapper .wc-product-table-controls>div.wc-product-table-multi-form .multi-cart-form').prepend(`
+						<svg width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M7.02344 15.6562C7.83892 15.6562 8.5 14.9952 8.5 14.1797C8.5 13.3642 7.83892 12.7031 7.02344 12.7031C6.20795 12.7031 5.54688 13.3642 5.54688 14.1797C5.54688 14.9952 6.20795 15.6562 7.02344 15.6562Z" fill="black"/>
+<path d="M12.9297 15.6562C13.7452 15.6562 14.4062 14.9952 14.4062 14.1797C14.4062 13.3642 13.7452 12.7031 12.9297 12.7031C12.1142 12.7031 11.4531 13.3642 11.4531 14.1797C11.4531 14.9952 12.1142 15.6562 12.9297 15.6562Z" fill="black"/>
+<path d="M15.3887 2.09375H5.8033C5.69945 1.67096 5.59511 1.24473 5.48929 0.848023C5.33523 0.438523 5.06552 0.213102 4.69195 0.151086C4.65011 0.139273 4.60877 0.125 4.5625 0.125H4.53789C3.55155 0.125 1.11719 0.125 1.11719 0.125C0.845008 0.125 0.625 0.345008 0.625 0.617188V1.60156C0.625 1.87374 0.845008 2.09375 1.11719 2.09375C1.11719 2.09375 3.04656 2.09375 3.77992 2.09375C4.37301 4.3145 4.93115 7.02547 5.52423 9.24573C5.69945 9.71084 6.01544 9.95251 6.47612 9.96875C8.94248 9.96875 11.4083 9.96875 13.8742 9.96875C14.2896 9.96875 14.7203 9.66704 14.8261 9.24573C15.302 7.34539 15.778 5.42734 16.2534 3.52503C16.2943 3.3759 16.3346 3.22726 16.375 3.07812C16.375 2.53426 15.934 2.09375 15.3887 2.09375Z" fill="black"/>
+</svg>
+						`);
+				$('section.sub_cat_catalog .content-area .wrapper_area .right_area .bottom_area .wc-product-table-wrapper .wc-product-table-controls>div.wc-product-table-multi-form .multi-cart-form,.search-results .wc-product-table-wrapper .wc-product-table-controls>div.wc-product-table-multi-form .multi-cart-form').addClass('btn-primary btn');
+					// $('.wc-product-table-multi-form').append('<a class="btn btn-secondary custom request-compare" href="#"><img src="/wp-content/plugins/catalog-ims/assets/images/svg/compre-catalog.svg" alt="icon" /><span>Compare</span><img src="/wp-content/plugins/catalog-ims/assets/images/svg/arrow-right-icon.svg" alt="icon" /></a>');
+					$('.wc-product-table-multi-form').append('<a class="btn btn-secondary custom request-info" href="/request-quote/"><img src="/wp-content/plugins/catalog-ims/assets/images/svg/rfi-catalog.svg" alt="icon" /><span>Request Information</span><img src="/wp-content/plugins/catalog-ims/assets/images/svg/arrow-right-icon.svg" alt="icon" /></a>');
+			}
+			$('.wc-product-table-multi-form').addClass('active');
+			$('.wcf-wpt-table-wrapper .dataTables_wrapper').addClass('active');
+		} else {
+			$('.wc-product-table-multi-form .button.custom').remove();
+			$('.wc-product-table-multi-form').removeClass('active');
+			$('.wcf-wpt-table-wrapper .dataTables_wrapper').removeClass('active');
+		}
+
+	});
+	
+	$(document).on('change', '.wpt-bulk-select', function(){
+		setTimeout(function(){
+			var count_check = $('.multi-cart-check input[type=checkbox]:checked').length;
+
+			if( count_check ) {
+				if( $('.wc-product-table-multi-form .btn.custom').length==false ) {
+					$('section.sub_cat_catalog .content-area .wrapper_area .right_area .bottom_area .wc-product-table-wrapper .wc-product-table-controls>div.wc-product-table-multi-form .multi-cart-form,.search-results .wc-product-table-wrapper .wc-product-table-controls>div.wc-product-table-multi-form .multi-cart-form').prepend(`<svg width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M7.02344 15.6562C7.83892 15.6562 8.5 14.9952 8.5 14.1797C8.5 13.3642 7.83892 12.7031 7.02344 12.7031C6.20795 12.7031 5.54688 13.3642 5.54688 14.1797C5.54688 14.9952 6.20795 15.6562 7.02344 15.6562Z" fill="black"/>
+<path d="M12.9297 15.6562C13.7452 15.6562 14.4062 14.9952 14.4062 14.1797C14.4062 13.3642 13.7452 12.7031 12.9297 12.7031C12.1142 12.7031 11.4531 13.3642 11.4531 14.1797C11.4531 14.9952 12.1142 15.6562 12.9297 15.6562Z" fill="black"/>
+<path d="M15.3887 2.09375H5.8033C5.69945 1.67096 5.59511 1.24473 5.48929 0.848023C5.33523 0.438523 5.06552 0.213102 4.69195 0.151086C4.65011 0.139273 4.60877 0.125 4.5625 0.125H4.53789C3.55155 0.125 1.11719 0.125 1.11719 0.125C0.845008 0.125 0.625 0.345008 0.625 0.617188V1.60156C0.625 1.87374 0.845008 2.09375 1.11719 2.09375C1.11719 2.09375 3.04656 2.09375 3.77992 2.09375C4.37301 4.3145 4.93115 7.02547 5.52423 9.24573C5.69945 9.71084 6.01544 9.95251 6.47612 9.96875C8.94248 9.96875 11.4083 9.96875 13.8742 9.96875C14.2896 9.96875 14.7203 9.66704 14.8261 9.24573C15.302 7.34539 15.778 5.42734 16.2534 3.52503C16.2943 3.3759 16.3346 3.22726 16.375 3.07812C16.375 2.53426 15.934 2.09375 15.3887 2.09375Z" fill="black"/>
+</svg>
+`);
+					$('section.sub_cat_catalog .content-area .wrapper_area .right_area .bottom_area .wc-product-table-wrapper .wc-product-table-controls>div.wc-product-table-multi-form .multi-cart-form,.search-results .wc-product-table-wrapper .wc-product-table-controls>div.wc-product-table-multi-form .multi-cart-form').addClass('btn-primary btn');
+					// $('.wc-product-table-multi-form').append('<a class="btn btn-secondary custom request-compare" href="#"><img src="/wp-content/plugins/catalog-ims/assets/images/svg/compre-catalog.svg" alt="icon" /><span>Compare</span><img src="/wp-content/plugins/catalog-ims/assets/images/svg/arrow-right-icon.svg" alt="icon" /></a>');
+					$('.wc-product-table-multi-form').append('<a class="btn btn-secondary custom request-info" href="/request-quote/"><img src="/wp-content/plugins/catalog-ims/assets/images/svg/rfi-catalog.svg" alt="icon" /><span>Request Information</span><img src="/wp-content/plugins/catalog-ims/assets/images/svg/arrow-right-icon.svg" alt="icon" /></a>');
+				}
+				$('.wc-product-table-multi-form').addClass('active');
+				$('.wcf-wpt-table-wrapper .dataTables_wrapper').addClass('active');
+			} else {
+				$('.wc-product-table-multi-form .button.custom').remove();
+				$('.wc-product-table-multi-form').removeClass('active');
+				$('.wcf-wpt-table-wrapper .dataTables_wrapper').removeClass('active');
+			}
+		}, 100);		
+	});	
+	
+	$(document).on('click', '.button.request-info', function(e){
+		e.preventDefault();
+		var href = $(this).attr('href');
+		$(this).addClass('disabled');
+		$('.request-info').text('Please wait...');
+		var i = 0;
+		var timeout = 0;
+		$('.multi-cart-check input[type=checkbox]').each(function(){
+			if($(this).is(':checked')) {
+				var t = $(this);
+				timeout = 1000*i;
+				setTimeout(function(){
+					t.parents('td').find('.add-request-quote-button').click();
+					t.parents('tr').find('.add-request-quote-button').addClass('quote-checked');
+				}, timeout);
+				
+				$(this).parents('tr').find('.single_add_to_cart_button img').attr('src', '/wp-content/plugins/catalog-ims/assets/images/svg/checklist_cart.svg');
+				
+				i++;
+			}
+		});
+		
+		setTimeout(function(){
+			window.location.href = href;
+		}, (1000*i)+1000);
+	});
+
+	function afterNotif() {
+		if( $('.multi-cart-message .cart-success').length == 0 ) {
+			$('.multi-cart-message').append('<p class="cart-success"><a href="/request-quote/" class="wc-forward">View Inquiry</a></p>');
+		}	
+		$('.multi-cart-check input[type=checkbox]').prop('checked', false);	
+		$('.wc-product-table-wrapper').fadeTo(500,1);
+		
+		if ( !(window.cims_wcf_compat && window.cims_wcf_compat.is_v2) ) {
+			$('body:not(.search-results) .cgims-extra-options-part-counter').html('<span>'+product_count+`</span> ${global_part_text}`);
+		}
+	}
+	
+	$(document).on('click', '.multi-cart-form.btn-primary.btn', function(e){
+		var carts = [];
+		var quotes = [];
+		var collects = [];
+		var total = 0;
+		
+		$('.wc-product-table-wrapper').fadeTo(500,0.4);
+		
+		$('.multi-cart-check input[name="wpt_product_price"]').each(function(){
+			if($(this).is(':checked')) {
+				var t = $(this);
+				
+				if( t.val() > 0 ) {
+					carts.push(t.next().val()); 
+				} else {
+					quotes.push(t.parents('tr.product-row').find('.col-action .add-request-quote-button').attr('data-product_id'));
+				}
+
+				if( t.val() != '' ) {
+					collects.push('product');
+				} else {
+					collects.push('quote');
+				}					
+
+				if(t.parents('tr').hasClass('purchasable')) {
+
+				} else {
+					t.parents('tr').find('.col-action .add-request-quote-button').addClass('quote-checked');
+				}
+				
+				$(this).parents('tr').find('.single_add_to_cart_button img').attr('src', '/wp-content/plugins/catalog-ims/assets/images/svg/checklist_cart.svg');
+
+				total++;
+			}
+		});
+
+		$.ajax({
+			url : cims_home_url+woocommerce_params.ajax_url,
+			type : "post",
+			dataType : "html",
+			data : {action: "catalogims_ajax_bulk_quote", carts: carts, quotes: quotes},
+			success: function(result) {
+				result = JSON.parse(result);
+
+				if( !result.success ) {
+					alert('Something errors..');
+					return false;
+				}
+
+				if( collects.includes("product") && collects.includes("quote") ) {
+					$.ajax({
+						url : cims_home_url+woocommerce_params.ajax_url,
+						type : "post",
+						dataType : "html",
+						data : {action: "catalogims_ajax_cart_info", total: total},
+						success: function(data) {
+							afterNotif();
+							$('.modal_notification').html(data).addClass('active');
+							setTimeout(function(){
+								$('.modal_notification').removeClass('active');
+							},10000);
+						}
+					});	
+				} else if( collects.includes("product") ) {
+					$.ajax({
+						url : cims_home_url+woocommerce_params.ajax_url,
+						type : "post",
+						dataType : "html",
+						data : {action: "catalogims_ajax_cart_info", total: total},
+						success: function(data) {
+							$('.modal_notification').html(data).addClass('active');
+							setTimeout(function(){
+								$('.modal_notification').removeClass('active');
+							},10000);
+							afterNotif();
+
+						}
+					});
+				} else if( collects.includes("quote") ) {
+					$.ajax({
+						url : cims_home_url+woocommerce_params.ajax_url,
+						type : "post",
+						dataType : "html",
+						data : {action: "catalogims_ajax_quote_info", total: total, type: 'this-product-quote'},
+						success: function(data) {
+							$('.modal_notification').html(data).addClass('active');
+							setTimeout(function(){
+								$('.modal_notification').removeClass('active');
+							},10000);
+							afterNotif();
+						
+						}
+					});		
+				}
+				
+			}
+		});			
+	});
+
+	// if(jQuery('body.yith-request-a-quote-page .woocommerce.ywraq-wrapper .ywraq-form-table-wrapper .return-to-shop .wc-backward').length) {
+	// 	jQuery('body.yith-request-a-quote-page .woocommerce.ywraq-wrapper .ywraq-form-table-wrapper .return-to-shop .wc-backward').attr('href', '/product-category/molded-rubber-products/');
+	// }
+
+	jQuery(document).on('click', '.search_box #___gcse_1 .gsc-search-button-v2', function(e){
+		e.preventDefault();
+		console.log('helllow');
+		let keyword = jQuery('.search_box #___gcse_1 input.gsc-input').val();
+		if(keyword) {
+			// window.location.href = `/search-results/?ddlSearchType=2&keyword=${keyword}`;
+		}
+	})
+
+
+	/* ------------------------------------------------------------------
+	 * CIMS-PRODUCT-COMPARE-QUOTE-02 (2026-07-31): shared selection toolbar.
+	 * A leftmost checkbox column is rendered server-side (product-compare.php).
+	 * The persistent toolbar exposes Add to Quote for 1–5 selections and Compare
+	 * for 2–5. Quote invokes YITH's native delegated frontend handler sequentially,
+	 * retaining its nonce/session/widget/event lifecycle instead of using the legacy
+	 * Catalog IMS bulk endpoint. CIMS-PRODUCT-COMPARE-QUOTE-03 (2026-07-31) adds a
+	 * View Quote navigation state only after the complete native queue succeeds. It
+	 * re-binds on every Barn2 redraw/filter/paginate.
+	 *
+	 * NOTE the LEADING SEMICOLON: the preceding `jQuery(document).on(...)` handler
+	 * has no trailing `;`, so without this `;` JS would parse `})( ... )(function(){...})`
+	 * as a single call → "jQuery(...).on(...) is not a function" thrown in document.ready,
+	 * which in jQuery 1.10.2 aborts the REST of the ready callbacks (killing Barn2's
+	 * DataTables pagination init too). The whole block is also wrapped in try/catch so a
+	 * compare bug can never again break the product table.
+	 * ------------------------------------------------------------------ */
+	;(function(){
+	  try {
+		var cfg = (typeof cims_compare_config !== 'undefined' && cims_compare_config) ? cims_compare_config : null;
+		if ( ! cfg ) { return; }
+
+
+		var MAX = parseInt(cfg.max, 10) > 0 ? parseInt(cfg.max, 10) : 5;
+		var i18n = cfg.i18n || {};
+		var quoteAvailable = cfg.quote_available !== false;
+		var quoteUrl = (typeof cfg.quote_url === 'string' && cfg.quote_url) ? cfg.quote_url : '/request-quote/';
+		var quoteBusy = false;
+		var successfulQuoteSignature = ''; // sorted product IDs for the last complete native queue
+		var selected = [];           // ordered list of selected product IDs (strings)
+		var selectedQuoteNonces = {}; // product ID -> native YITH nonce
+		var $modal = null;
+		var lastFocus = null;
+
+		function compareTables(){
+			return $('table.wc-product-table').filter(function(){
+				return $(this).find('.cims-compare-check').length > 0;
+			});
+		}
+
+		function selectionHas(id){ return selected.indexOf(id) !== -1; }
+
+		// Set semantics make the View Quote state survive Barn2 sort/redraw changes.
+		function selectionSignature(ids){
+			var signatureIds = (ids || selected).slice(0).map(String);
+			signatureIds.sort(function(a, b){
+				var aNumber = parseInt(a, 10);
+				var bNumber = parseInt(b, 10);
+				if ( ! isNaN(aNumber) && ! isNaN(bNumber) && aNumber !== bNumber ) { return aNumber - bNumber; }
+				return a < b ? -1 : (a > b ? 1 : 0);
+			});
+			return signatureIds.join('|');
+		}
+
+		function addSelection(id, quoteNonce){
+			if ( selectionHas(id) ) {
+				if ( quoteNonce ) { selectedQuoteNonces[id] = quoteNonce; }
+				return true;
+			}
+			if ( selected.length >= MAX ) { return false; }
+			selected.push(id);
+			selectedQuoteNonces[id] = quoteNonce || '';
+			return true;
+		}
+
+		function removeSelection(id){
+			var idx = selected.indexOf(id);
+			if ( idx !== -1 ) { selected.splice(idx, 1); }
+			delete selectedQuoteNonces[id];
+		}
+
+		// Keep checkbox checked state + disabled state in sync with `selected`
+		// across the (re-rendered) rows of every compare table.
+		function syncCheckboxes(){
+			var atMax = selected.length >= MAX;
+			$('.cims-compare-check').each(function(){
+				var $cb = $(this);
+				var id = String($cb.val());
+				var isSel = selectionHas(id);
+				if ( isSel && $cb.attr('data-quote-nonce') ) { selectedQuoteNonces[id] = String($cb.attr('data-quote-nonce')); }
+				if ( $cb.prop('checked') !== isSel ) { $cb.prop('checked', isSel); }
+				$cb.prop('disabled', quoteBusy || (!isSel && atMax));
+				$cb.closest('.cims-compare-check-wrap').toggleClass('is-disabled', quoteBusy || (!isSel && atMax));
+			});
+		}
+
+		function barMarkup(){
+			var compare = (i18n.button || 'Compare');
+			var quote = (i18n.quoteButton || 'Add to Quote');
+			var clear = (i18n.clear || 'Clear Selection');
+			return '' +
+				'<div class="cims-compare-bar" role="region" aria-label="' + (i18n.title || 'Compare Products') + '">' +
+					'<span class="cims-compare-bar-count" aria-live="polite"></span>' +
+					'<button type="button" class="cims-quote-btn btn btn-primary" data-mode="add" aria-label="' + quote + '" title="' + quote + '" disabled>' +
+						'<span class="cims-quote-btn-label">' + quote + '</span>' +
+					'</button>' +
+					'<button type="button" class="cims-compare-btn btn btn-primary" disabled>' +
+						'<img class="cims-compare-btn-icon" src="/wp-content/plugins/catalog-ims/assets/images/svg/compre-catalog.svg" alt="" aria-hidden="true" />' +
+						'<span class="cims-compare-btn-label">' + compare + '</span>' +
+					'</button>' +
+					'<button type="button" class="cims-compare-clear">' + clear + '</button>' +
+					'<span class="cims-compare-bar-notice" aria-live="polite"></span>' +
+				'</div>';
+		}
+
+		// Ensure exactly one compare bar sits directly above each compare table.
+		function ensureBar(){
+			compareTables().each(function(){
+				var $table = $(this);
+				// MACRO-PARENT (2026-06-12): on macro parent pages the Product Table is
+				// AJAX-injected inside .product_table_wrap_new, which is watched by the
+				// macro template's MutationObserver(childList+subtree). Anchor the bar
+				// OUTSIDE that wrap (a sibling before it) so it (a) never re-triggers the
+				// observer/width-lock loop and (b) survives table re-injects instead of
+				// being wiped on every filter/paginate. Leaf path is unchanged.
+				var $macro = $table.closest('.cims-macro-filter-results');
+				if ( $macro.length ) {
+					if ( $macro.find('.cims-compare-bar').length ) { return; }
+					var $wrap = $table.closest('.product_table_wrap_new');
+					if ( $wrap.length ) { $wrap.before(barMarkup()); }
+					else { $macro.prepend(barMarkup()); }
+					return;
+				}
+				var $anchor = $table.closest('.dataTables_wrapper');
+				if ( ! $anchor.length ) { $anchor = $table; }
+				if ( $anchor.prev('.cims-compare-bar').length ) { return; }
+				$anchor.before(barMarkup());
+			});
+		}
+
+		function updateBar(){
+			var count = selected.length;
+			var signature = selectionSignature();
+			var mode = quoteBusy ? 'busy' : (signature && signature === successfulQuoteSignature ? 'view' : 'add');
+			var label = mode === 'busy' ? (i18n.quoteAdding || 'Adding to Quote…') : (mode === 'view' ? (i18n.quoteView || 'View Quote') : (i18n.quoteButton || 'Add to Quote'));
+			var quoteDisabled = mode === 'busy' || (mode === 'add' && (count < 1 || !quoteAvailable));
+			$('.cims-compare-bar').each(function(){
+				var $bar = $(this);
+				var $quote = $bar.find('.cims-quote-btn');
+				$bar.prop('hidden', false);
+				$bar.attr('aria-busy', quoteBusy ? 'true' : 'false').toggleClass('is-quote-busy', quoteBusy);
+				$bar.find('.cims-compare-bar-count').text(count + ' selected');
+				$quote.prop('disabled', quoteDisabled).attr('data-mode', mode).attr('aria-label', label).attr('title', label).attr('aria-busy', mode === 'busy' ? 'true' : 'false');
+				$bar.find('.cims-compare-btn').prop('disabled', count < 2 || quoteBusy);
+				$bar.find('.cims-quote-btn-label').text(label);
+			});
+		}
+
+		function flashNotice(msg){
+			var $n = $('.cims-compare-bar-notice');
+			$n.text(msg);
+			clearTimeout(flashNotice._t);
+			flashNotice._t = setTimeout(function(){ $n.text(''); }, 3500);
+		}
+
+		function refresh(){
+			ensureBar();
+			syncCheckboxes();
+			updateBar();
+		}
+
+		// Build an invisible YITH-compatible button. The nested .cart wrapper makes
+		// YITH serialize an empty form safely; product ID + nonce are then appended by YITH.
+		function quoteProxy(id){
+			var nonce = selectedQuoteNonces[id] || '';
+			if ( ! nonce ) { return $(); }
+			return $('<div class="cims-quote-native-proxy yith-ywraq-add-to-quote"><div class="yith-ywraq-add-button cart"><a href="#" class="add-request-quote-button" aria-hidden="true" tabindex="-1"></a></div></div>')
+				.find('.add-request-quote-button')
+				.attr('data-product_id', id)
+				.attr('data-wp_nonce', nonce)
+				.closest('.cims-quote-native-proxy');
+		}
+
+		// YITH allows a single in-flight XHR, so process the checked products serially.
+		function addSelectedToQuote(){
+			if ( quoteBusy ) { return; }
+			if ( ! quoteAvailable ) {
+				flashNotice(i18n.quoteUnavailable || 'Request a Quote is currently unavailable.');
+				return;
+			}
+			var queue = selected.slice(0, MAX);
+			if ( ! queue.length ) { return; }
+			var batchSignature = selectionSignature(queue);
+			successfulQuoteSignature = '';
+			quoteBusy = true;
+			syncCheckboxes();
+			updateBar();
+			var index = 0;
+			var failed = false;
+
+			function finish(){
+				quoteBusy = false;
+				successfulQuoteSignature = failed ? '' : batchSignature;
+				syncCheckboxes();
+				updateBar();
+				flashNotice(failed ? (i18n.quoteError || 'Unable to add the selected products to Quote. Please try again.') : (i18n.quoteSuccess || 'Selected products added to Quote.'));
+			}
+
+			function next(){
+				if ( failed || index >= queue.length ) { finish(); return; }
+				var id = String(queue[index]);
+				var $proxy = quoteProxy(id);
+				if ( ! $proxy.length ) { failed = true; finish(); return; }
+				var eventNamespace = '.cimsQuoteQueue';
+				var timeout = setTimeout(function(){
+					$(document).off(eventNamespace);
+					$proxy.remove();
+					failed = true;
+					finish();
+				}, 30000);
+				$(document).one('yith_wwraq_added_successfully' + eventNamespace, function(e, response, productId){
+					if ( productId && String(productId) !== id ) { return; }
+					if ( response && typeof response.rqa_url === 'string' && response.rqa_url ) { quoteUrl = response.rqa_url; }
+					clearTimeout(timeout);
+					$(document).off(eventNamespace);
+					$proxy.remove();
+					index++;
+					flashNotice((i18n.quoteProgress || 'Adding %1$d of %2$d to Quote…').replace('%1$d', index).replace('%2$d', queue.length));
+					setTimeout(next, 0);
+				});
+				$(document).one('yith_wwraq_error_while_adding' + eventNamespace, function(){
+					clearTimeout(timeout);
+					$(document).off(eventNamespace);
+					$proxy.remove();
+					failed = true;
+					finish();
+				});
+				$('body').append($proxy);
+				$proxy.find('.add-request-quote-button').trigger('click');
+			}
+			next();
+		}
+
+		// Collect the current header label map (tax token -> visible heading text)
+		// from a compare table, so the modal rows MATCH the current contextual display.
+		function collectLabels(){
+			var labels = {};
+			var $table = compareTables().filter(':visible').first();
+			if ( ! $table.length ) { $table = compareTables().first(); }
+			$table.find('thead th').each(function(){
+				var name = $(this).attr('data-name') || '';
+				if ( name.indexOf('tax:') === 0 ) {
+					var txt = $.trim($(this).text());
+					if ( txt ) { labels[name] = txt; }
+				}
+			});
+			return labels;
+		}
+
+		/* ----- Modal ----- */
+		function ensureModal(){
+			if ( $modal && $modal.length ) { return $modal; }
+			$modal = $('' +
+				'<div class="cims-compare-modal" hidden>' +
+					'<div class="cims-compare-modal-overlay"></div>' +
+					'<div class="cims-compare-modal-dialog" role="dialog" aria-modal="true" aria-label="' + (i18n.title || 'Compare Products') + '" tabindex="-1">' +
+						'<div class="cims-compare-modal-header">' +
+							'<h2 class="cims-compare-modal-title">' + (i18n.title || 'Compare Products') + '</h2>' +
+							'<button type="button" class="cims-compare-modal-close" aria-label="' + (i18n.close || 'Close') + '">' +
+								'<img src="/wp-content/plugins/catalog-ims/assets/images/svg/catalog_close_new.svg" alt="' + (i18n.close || 'Close') + '" />' +
+							'</button>' +
+						'</div>' +
+						'<div class="cims-compare-modal-body"></div>' +
+					'</div>' +
+				'</div>');
+			$('body').append($modal);
+			return $modal;
+		}
+
+		function openModal(){
+			ensureModal();
+			lastFocus = document.activeElement;
+			$modal.prop('hidden', false);
+			$('body').addClass('cims-compare-open');
+			$modal.find('.cims-compare-modal-dialog').focus();
+		}
+
+		function closeModal(){
+			if ( ! $modal ) { return; }
+			$modal.prop('hidden', true);
+			$('body').removeClass('cims-compare-open');
+			if ( lastFocus && lastFocus.focus ) { try { lastFocus.focus(); } catch(e){} }
+		}
+
+		function loadComparison(){
+			if ( selected.length < 2 ) {
+				flashNotice(i18n.minNotice || 'Select at least two products to compare.');
+				return;
+			}
+			ensureModal();
+			$modal.find('.cims-compare-modal-body').html('<div class="cims-compare-loading">' + (i18n.loading || 'Loading…') + '</div>');
+			openModal();
+
+			$.ajax({
+				url: cfg.ajax_url,
+				type: 'POST',
+				dataType: 'json',
+				data: {
+					action: cfg.action || 'cims_compare_products',
+					nonce: cfg.nonce,
+					ids: selected,
+					labels: collectLabels(),
+					term_id: cfg.term_id || 0
+				}
+			}).done(function(resp){
+				if ( resp && resp.success && resp.data && resp.data.html ) {
+					$modal.find('.cims-compare-modal-body').html(resp.data.html);
+				} else {
+					var msg = (resp && resp.data && resp.data.message) ? resp.data.message : (i18n.error || 'Sorry, the comparison could not be loaded.');
+					$modal.find('.cims-compare-modal-body').html('<div class="cims-compare-error">' + msg + '</div>');
+				}
+			}).fail(function(){
+				$modal.find('.cims-compare-modal-body').html('<div class="cims-compare-error">' + (i18n.error || 'Sorry, the comparison could not be loaded.') + '</div>');
+			});
+		}
+
+		/* ----- Events ----- */
+		$(document).on('change', '.cims-compare-check', function(){
+			if ( quoteBusy ) { syncCheckboxes(); return; }
+			// A human selection edit starts a new batch; redraw synchronization does not fire change.
+			successfulQuoteSignature = '';
+			var id = String($(this).val());
+			if ( $(this).prop('checked') ) {
+				if ( ! addSelection(id, String($(this).attr('data-quote-nonce') || '')) ) {
+					$(this).prop('checked', false);
+					flashNotice((i18n.maxNotice || 'You can compare up to 5 products.'));
+				}
+			} else {
+				removeSelection(id);
+			}
+			syncCheckboxes();
+			updateBar();
+		});
+
+		$(document).on('click', '.cims-quote-btn', function(e){
+			e.preventDefault();
+			if ( ($(this).attr('data-mode') || 'add') === 'view' ) {
+				window.location.assign(quoteUrl);
+				return;
+			}
+			addSelectedToQuote();
+		});
+
+		$(document).on('click', '.cims-compare-btn', function(e){
+			e.preventDefault();
+			loadComparison();
+		});
+
+		$(document).on('click', '.cims-compare-clear', function(e){
+			e.preventDefault();
+			if ( quoteBusy ) { return; }
+			selected = [];
+			selectedQuoteNonces = {};
+			successfulQuoteSignature = '';
+			syncCheckboxes();
+			updateBar();
+		});
+
+		$(document).on('click', '.cims-compare-modal-close, .cims-compare-modal-overlay', function(e){
+			e.preventDefault();
+			closeModal();
+		});
+
+		$(document).on('keydown', function(e){
+			if ( e.key === 'Escape' && $modal && ! $modal.prop('hidden') ) {
+				closeModal();
+			}
+		});
+
+		// Re-bind on Barn2 redraws (filter / paginate / sort / show-count). Bound on
+		// `document` (delegated) + Barn2's own native events — NOT a document-wide
+		// `ajaxComplete` (that fired on every unrelated AJAX). Each handler is itself
+		// guarded so a refresh error can't escape into Barn2's draw pipeline.
+		$(document).on('draw.dt draw.wcpt', '.wc-product-table', function(){
+			try { refresh(); } catch(e) { if (window.console) { console.error('cims compare refresh error', e); } }
+		});
+		if ( window.wp && wp.hooks && typeof wp.hooks.addAction === 'function' ) {
+			wp.hooks.addAction('wcpf.filteringDone', 'cims/compare-refresh', function(){ setTimeout(function(){ try { refresh(); } catch(e){} }, 0); });
+			wp.hooks.addAction('wcpf.wpt.filteringDone', 'cims/compare-refresh', function(){ setTimeout(function(){ try { refresh(); } catch(e){} }, 0); });
+		}
+		function queueWcf2CompareRefresh() {
+			var attempt = 0;
+			function run() {
+				attempt++;
+				try { refresh(); } catch(e) {}
+				if ( compareTables().length && !$('.cims-compare-bar').length && attempt < 12 ) {
+					setTimeout(run, 250);
+				}
+			}
+			run();
+		}
+		// WCF 2 dispatches native CustomEvents. jQuery's synthetic event bridge is
+		// unreliable for this portal redraw path, so subscribe at the document API.
+		document.addEventListener('wcf:products:afterRender', queueWcf2CompareRefresh);
+
+		// Initial pass (and a short retry while Barn2 boots the first table).
+		refresh();
+		var _tries = 0;
+		var _boot = setInterval(function(){
+			_tries++;
+			try { refresh(); } catch(e) {}
+			if ( compareTables().length || _tries > 20 ) { clearInterval(_boot); }
+		}, 250);
+	  } catch (e) {
+		// Never let a compare-feature error break Barn2's DataTables / pagination.
+		if ( window.console ) { console.error('CIMS-PRODUCT-COMPARE-01 init error (table unaffected):', e); }
+	  }
+	})();
+
+});
+
+

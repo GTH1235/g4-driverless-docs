@@ -1,0 +1,64 @@
+/*!***********************************************************************************************************************************************************************************!*\
+  !*** css ./node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[2].use[1]!./node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[2].use[2]!./assets/css/frontend/style.css ***!
+  \***********************************************************************************************************************************************************************************/
+/* 768px */ /* 1056px */ :root {
+	--c-white: #fff;
+	--c-primary-100: #f0f8ff;
+	--c-primary-400: #005ea1;
+	--c-primary-900: #002145;
+	--c-grey-300: #f3f3f3;
+	--c-grey-400: #d8d8d8;
+	--c-grey-500: #979797;
+	--c-grey-800: #333;
+	--c-grey-900: #231f20;
+} :root {
+	--sp-xs: 0.5rem;   /* 8px */
+	--sp-sm: 0.625rem; /* 10px */
+	--sp-md: 1rem;     /* 16px */
+	--sp-lg: 1.25rem;  /* 20px */
+	--sp-xl: 1.5rem;   /* 24px */
+} :root {
+	--f-primary: gilroy, sans-serif;
+	--fs-2xs: 0.625rem; /* 10px */
+	--fs-xs: 0.75rem;   /* 12px */
+	--fs-sm: 0.875rem;  /* 14px */
+	--fs-md: .9rem;      /* 16px */
+  --fs-lg: 1.75rem;    
+	--fs-xl: 2.5rem;    /* 40px */
+	--fs-2xl: 3.125rem; /* 50px */
+	--fw-bold: 700;
+} :root {
+	--br-md: 1rem;
+} @font-face {
+	font-family: gilroy;
+	font-style: normal;
+	font-weight: 700; /* Bold */
+	src: url("../fonts/Gilroy/Gilroy-Bold.ttf") format("truetype");
+} @font-face {
+	font-family: gilroy;
+	font-style: normal;
+	font-weight: 900;
+	src: url("../fonts/Gilroy/Gilroy-Heavy.ttf") format("truetype");
+} @font-face {
+	font-family: gilroy;
+	font-style: normal;
+	font-weight: 300;
+	src: url("../fonts/Gilroy/Gilroy-Light.ttf") format("truetype");
+} @font-face {
+	font-family: gilroy;
+	font-style: normal;
+	font-weight: 500;
+	src: url("../fonts/Gilroy/Gilroy-Medium.ttf") format("truetype");
+} @font-face {
+	font-family: gilroy;
+	font-style: normal;
+	font-weight: 400;
+	src: url("../fonts/Gilroy/Gilroy-Regular.ttf") format("truetype");
+} .component-selector {
+	font-family: var(--f-primary);
+} .component-selector * {
+		box-sizing: border-box;
+	}
+
+
+/*# sourceMappingURL=frontend.css.map*/

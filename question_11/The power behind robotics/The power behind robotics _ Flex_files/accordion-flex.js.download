@@ -1,0 +1,151 @@
+// -------------------------------------
+// Helper: refresh accordions in visible tabs
+// -------------------------------------
+function refreshVisibleAccordions() {
+	document.querySelectorAll('.accordion-flex').forEach(accordion => {
+
+		// Ignore accordions inside hidden tabs
+		if (accordion.offsetParent === null) return;
+		
+		// Collapse all other items when tab becomes visible
+		accordion.querySelectorAll('.accordion-item-flex.block').forEach((item, idx) => {
+			const p = item.querySelector('[data-accordion-panel]');
+			const i = item.querySelector('.accordion-icon');
+		
+			if (!p) return;
+		
+			if (idx !== 0) {
+				p.style.maxHeight = '0';
+				i?.classList.remove('open');
+			}
+		});
+		
+		const expandFirst = accordion.dataset.expandFirst === 'true';
+		const firstItem = accordion.querySelector('.accordion-item-flex.block');
+		if (!firstItem || !expandFirst) return;
+		
+		const panel = firstItem.querySelector('[data-accordion-panel]');
+		const icon  = firstItem.querySelector('.accordion-icon');
+		if (!panel) return;
+
+		// Only expand if collapsed
+		if (!panel.style.maxHeight || panel.style.maxHeight === '0px') {
+			requestAnimationFrame(() => {
+				panel.style.maxHeight = panel.scrollHeight + 'px';
+				icon?.classList.add('open');
+			});
+		}
+	});
+}
+
+// -------------------------------------
+// Initial accordion setup
+// -------------------------------------
+document.addEventListener('DOMContentLoaded', function () {
+
+	document.querySelectorAll('.accordion-flex').forEach(accordion => {
+		const items = accordion.querySelectorAll('.accordion-item-flex.block');
+
+		items.forEach((item, index) => {
+			// === Background/color logic ===
+			const bg = getComputedStyle(accordion).getPropertyValue('--accordion-btn-bg').trim();
+			if (bg) {
+				item.style.background = bg;
+
+				function isLight(hex) {
+					if (!hex.startsWith('#')) return true;
+					let r = parseInt(hex.substr(1,2),16);
+					let g = parseInt(hex.substr(3,2),16);
+					let b = parseInt(hex.substr(5,2),16);
+					let luminance = (0.299*r + 0.587*g + 0.114*b)/255;
+					return luminance > 0.6;
+				}
+
+				item.classList.add(isLight(bg) ? 'dark-content' : 'light-content');
+			}
+
+			// === Accordion button and icon ===
+			const trigger = item.querySelector('[data-accordion-trigger]');
+			if (!trigger) return;
+			
+			const icon = trigger.querySelector('.accordion-icon');
+			
+			const panel = item.querySelector('[data-accordion-panel]');
+			if (!panel) return;
+
+			panel.style.overflow = 'hidden';
+			panel.style.transition = 'max-height 0.3s ease';
+
+			const expandFirst = accordion.dataset.expandFirst === 'true';
+			
+			// === Default state ===
+			if (index === 0 && expandFirst && accordion.offsetParent !== null) {
+				panel.style.maxHeight = panel.scrollHeight + 'px';
+				icon.classList.add('open');
+			} else {
+				// If accordion is hidden, do nothing — let refreshVisibleAccordions handle it later
+				if (accordion.closest('.tab')?.style.display !== 'none') {
+					panel.style.maxHeight = '0';
+					icon.classList.remove('open');
+				} else {
+					// Leave max-height unset so hidden panels don't auto-expand later
+					panel.style.maxHeight = '';
+					icon.classList.remove('open');
+				}
+			}
+
+			// === Click toggle (single item open at a time) ===
+			trigger.addEventListener('click', () => {
+				const isOpen = panel.style.maxHeight && panel.style.maxHeight !== '0px';
+
+				if (isOpen) {
+					panel.style.maxHeight = '0';
+					icon.classList.remove('open');
+				} else {
+					// Close any other open item
+					items.forEach(otherItem => {
+						const otherPanel = otherItem.querySelector('[data-accordion-panel]');
+						const otherIcon = otherItem.querySelector('.accordion-icon');
+						if (otherPanel && otherPanel !== panel) {
+							otherPanel.style.maxHeight = '0';
+							otherIcon?.classList.remove('open');
+						}
+					});
+
+					// Open clicked item
+					panel.style.maxHeight = panel.scrollHeight + 'px';
+					icon.classList.add('open');
+				}
+			});
+		});
+	});
+
+});
+
+// -------------------------------------
+// Resize handler
+// -------------------------------------
+window.addEventListener('resize', () => {
+
+	// Recalculate heights of open panels
+	document.querySelectorAll('.accordion-flex').forEach(accordion => {
+
+		// Skip hidden accordions (e.g., inside hidden tabs)
+		if (accordion.offsetParent === null) return;
+
+		accordion.querySelectorAll('.accordion-item-flex.block').forEach(item => {
+			const panel = item.querySelector('[data-accordion-panel]');
+			const icon  = item.querySelector('.accordion-icon');
+			if (!panel) return;
+
+			// Treat "open" as the source of truth
+			const isOpen = icon?.classList.contains('open');
+
+			if (isOpen) {
+				// Just resize, don't change state
+				panel.style.maxHeight = panel.scrollHeight + 'px';
+			}
+		});
+	});
+
+});

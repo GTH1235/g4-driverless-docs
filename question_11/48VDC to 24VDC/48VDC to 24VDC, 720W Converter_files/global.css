@@ -1,0 +1,521 @@
+/* Fix bug: checkbox not triggered */
+section.sub_cat_catalog .content-area .left_area .wcf-filter [role="listitem"] .wcf-checkbox input[type=checkbox] {
+	z-index: -1;
+}
+
+/* Add custom sort (Sort by & Show) */
+.cgims-extra-options:before,
+.cgims-extra-options:after {
+	content: "";
+	display: table;
+	clear: both;
+}
+.cgims-extra-options {
+	padding: 10px 0;
+}
+.cgims-extra-options .cgims-extra-options-left {
+	float: left;	
+}
+.cgims-extra-options .cgims-extra-options-right {
+	float: right;	
+}
+.cgims-extra-options .cgims-extra-options-part-counter,
+.cgims-extra-options .cgims-extra-options-part-counter-new {
+	font-weight: 600;
+	line-height: 51px;
+	height: 51px;
+}
+.cgims-extra-options .cgims-extra-options-part-sort {
+	display: flex;	
+}
+.cgims-extra-options .cgims-extra-options-part-sort label {
+	font-weight: 600;
+	margin-left: 20px;
+}
+.cgims-extra-options .cgims-extra-options-part-sort select {
+	display: inline-block;
+	width: 100px;
+	margin-left: 8px;
+}
+
+
+.wcf-active-filter span::before {
+    content: attr(data-html) ;
+    font-weight: 700;
+}
+
+.multi-cart-message > a {
+	display: none !important;
+}
+
+.wc-product-table-wrapper.genesis-block-theme .cart-success a.wc-forward,
+.multi-cart-message .cart-success > a {
+	display: inline-block !important;
+}
+
+.filter-more {
+	cursor: pointer;
+	display: block;
+	font-size: 16px;
+}
+
+.multi-cart-message .cart-error {
+	display: none !important;
+}
+
+.multi-cart-form.btn-primary.btn .button {
+	position: relative;
+}
+.multi-cart-form.btn-primary.btn .button:after {
+	content: "";
+	position: absolute;
+	left: -20px;
+	right: -20px;
+	height: 33px;
+	top: -16px;
+}
+.wcf-active-filter em {
+	font-style: normal;
+}
+
+
+/* Pagination */
+.wcf-pagination-wrapper {
+	/*margin-top: -45px !important;*/
+	padding-left: 10px;
+	margin-bottom: 30px;
+}
+.wcf-pagination-wrapper>nav {
+	text-align: left !important;
+}
+.wcf-pagination-wrapper>nav ul {
+	border: 0 !important;
+	background: none !important;	
+}
+.woocommerce-page .wcf-pagination-wrapper>nav ul li {
+	margin-right: 10px !important;
+}
+.wcf-backup-pagination {
+	display: none !important;
+	margin-bottom: 30px !important;
+	text-align: left !important;
+	padding: 0 20px !important;
+}
+.wcf-pagination {
+	display: none !important;
+}
+.wcf-backup-pagination ul,
+.wcf-backup-pagination ul li,
+.wcf-backup-pagination ul li a {
+	border: 0 !important;
+	background: none !important;
+}
+.wcf-backup-pagination ul li > * {
+	padding: 8px 12px !important;
+	font-size: 15px !important;
+	font-weight: 600 !important;
+}
+.wcf-backup-pagination .page-numbers li {
+	margin: 0 1px !important;
+}
+.wcf-backup-pagination .page-numbers li .page-numbers.current {
+	background-color: #000 !important;
+	border-radius: 3px !important;
+	font-size: 15px !important;
+	font-weight: 600 !important;
+}
+.wcf-backup-pagination .page-numbers li:last-child .next {
+	content: url('../../../assets/images/svg/arrow-right-icon.svg');
+	padding: 8px 0px !important;
+}
+.wcf-backup-pagination .page-numbers li:first-child .prev {
+	content: url('../../../assets/images/svg/arrow-right-icon.svg');
+	transform: rotate(180deg);
+	padding: 8px 0px !important;
+}
+.wc-product-table-wrapper {
+	margin-bottom: 0px !important;
+}
+.dataTables_paginate {
+	display: flex !important;
+	margin-bottom: 30px !important;
+}
+.wc-product-table th:last-child,
+.wc-product-table td:last-child {
+	text-align: right !important;
+}
+.wc-product-table td {
+	padding-left: 15px !important;
+	padding-right: 15px !important;
+}
+.wc-product-table td:last-child .add-to-cart-wrapper,
+.wc-product-table td:last-child .yith-ywraq-add-to-quote {
+	display: inline-block !important;
+}
+.wc-product-table th:last-child,
+.wc-product-table td:last-child {
+	width: 80px !important;
+}
+.wc-product-table td:nth-child(2) a,
+.wc-product-table td:nth-child(3) a,
+.wc-product-table td:nth-child(4) a,
+.wc-product-table td:nth-child(5) a {
+	display: inline !important;
+}
+
+.multi-cart-check input[name="wpt_product_price"] {
+	z-index: 20 !important;
+}
+section.sub_cat_catalog .content-area .left_area .wcf-filter [role="listitem"] .wcf-checkbox input[type=checkbox] {
+	position: relative !important;
+	/* z-index: -1 !important; */
+}
+.wcf-active-filter b {
+	margin-left: 5px;
+}
+
+/* CIMS-WCF-FILTER-UX-01 (2026-06-03): keep applied filter chips/reset visible above results. */
+#wcf-sorting-bar.cims-wcf-filter-ux-active {
+	margin: 0 0 16px;
+}
+#wcf-sorting-bar .cims-wcf-native-pool-hidden {
+	display: none !important;
+}
+#wcf-sorting-bar .wcf-results-pool {
+	display: block;
+}
+#wcf-sorting-bar .wcf-active-filters-list {
+	margin: 0 0 12px !important;
+	text-align: left !important;
+}
+#wcf-sorting-bar .wcf-active-filters {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	justify-content: flex-start;
+	margin: 0 0 12px;
+}
+#wcf-sorting-bar .wcf-active-filters > span {
+	font-weight: 700;
+	margin-right: 4px;
+}
+#wcf-sorting-bar .wcf-active-filter {
+	align-items: center;
+	background: #000;
+	border: 1px solid #000;
+	border-radius: 999px;
+	color: #fff;
+	display: inline-flex;
+	font-size: 14px;
+	line-height: 1.2;
+	margin: 0;
+	padding: 6px 10px 6px 12px;
+}
+#wcf-sorting-bar .wcf-active-filter span {
+	align-items: center;
+	display: inline-flex;
+	gap: 6px;
+}
+#wcf-sorting-bar .wcf-active-filter svg {
+	fill: currentColor !important;
+	height: 16px;
+	width: 16px;
+}
+#wcf-sorting-bar .wcf-active-filters a,
+#wcf-sorting-bar .wcf-active-filters .wcf-reset-filters-btn,
+.tile_filter p .filter-clear-all.cims-wcf-reset-all {
+	color: #000 !important;
+	font-size: 14px;
+	font-weight: 700 !important;
+	margin-left: 8px;
+	text-decoration: underline;
+}
+.tile_filter p .filter-clear-all.cims-wcf-reset-all {
+	display: inline-block;
+}
+
+/* CIMS-WCF-TABLE-WIDTH-01 (2026-06-03): preserve generated Barn2 column widths after WCF redraws. */
+.wcf-wpt-table-wrapper .wc-product-table.cims-wcf-table-width-locked,
+section.sub_cat_catalog .wc-product-table.cims-wcf-table-width-locked {
+	table-layout: fixed !important;
+	width: 100% !important;
+}
+.wcf-wpt-table-wrapper .wc-product-table.cims-wcf-table-width-locked th,
+.wcf-wpt-table-wrapper .wc-product-table.cims-wcf-table-width-locked td,
+section.sub_cat_catalog .wc-product-table.cims-wcf-table-width-locked th,
+section.sub_cat_catalog .wc-product-table.cims-wcf-table-width-locked td {
+	box-sizing: border-box;
+}
+
+/* CIMS-WCF-SKU-WRAP-01 (2026-06-05): force long unbroken SKUs in the locked first
+   (Item #) column to wrap instead of overflowing into the next column. table-layout:
+   fixed pins the column width, so the cell text must be told how to break. */
+.wcf-wpt-table-wrapper .wc-product-table.cims-wcf-table-width-locked th:first-child,
+.wcf-wpt-table-wrapper .wc-product-table.cims-wcf-table-width-locked td:first-child,
+.wcf-wpt-table-wrapper .wc-product-table.cims-wcf-table-width-locked td:first-child a,
+section.sub_cat_catalog .wc-product-table.cims-wcf-table-width-locked th:first-child,
+section.sub_cat_catalog .wc-product-table.cims-wcf-table-width-locked td:first-child,
+section.sub_cat_catalog .wc-product-table.cims-wcf-table-width-locked td:first-child a {
+	white-space: normal !important;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+/* ===================================================================
+   CIMS-PRODUCT-COMPARE-01 (2026-06-12): "Compare up to 5 products"
+   - leftmost checkbox column, the Compare bar above the table, and the
+     nearly-full-screen comparison modal.
+   =================================================================== */
+
+/* Leftmost compare checkbox column header is blank/narrow. */
+.wc-product-table th.col-compare,
+.wc-product-table td.col-compare {
+	text-align: center;
+	vertical-align: middle;
+	padding-left: 4px;
+	padding-right: 4px;
+}
+.wc-product-table th.col-compare { font-size: 0; }
+
+/* Custom checkbox styled like the existing IMS checkbox controls.
+   NOTE: the theme's style.css sets `input[type=checkbox]{ width:auto !important }`
+   which (with appearance:none) collapsed our box into a ~1px sliver — so the box
+   dimensions MUST use !important to win, and the wrapping <label> is an enlarged
+   click target so the whole cell area toggles. */
+.wc-product-table td.col-compare,
+.wc-product-table th.col-compare {
+	text-align: center;
+	vertical-align: middle;
+}
+.cims-compare-check-wrap {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	margin: 0 auto;
+	padding: 6px 8px;         /* modest hit-area around the small square box */
+	box-sizing: border-box;
+}
+.cims-compare-check-wrap.is-disabled { cursor: not-allowed; opacity: 0.45; }
+/* Match the site's existing checkbox recipe (cart .multi-cart-check / filter
+   sidebar): a 14px SQUARE box with `border-radius:0` (the theme's
+   `input[type=checkbox]{width:auto !important}` forces the !important width). */
+.cims-compare-check-wrap input[type=checkbox].cims-compare-check {
+	-webkit-appearance: none !important;
+	-moz-appearance: none !important;
+	appearance: none !important;
+	width: 14px !important;
+	height: 14px !important;
+	min-width: 14px !important;
+	max-width: 14px !important;
+	flex: 0 0 14px;
+	margin: 0 !important;
+	padding: 0 !important;
+	border: 1px solid #A4ACB3;
+	border-radius: 0;
+	background-color: #fff;
+	background-position: center;
+	background-repeat: no-repeat;
+	background-size: 10px;
+	cursor: inherit;
+	display: inline-block !important;
+	vertical-align: middle;
+	top: 0;
+}
+.cims-compare-check-wrap input[type=checkbox].cims-compare-check:checked {
+	background-color: #F7AC11;
+	border-color: transparent;
+	background-image: url(/wp-content/plugins/catalog-ims/assets/images/svg/checklist_icon_checbox.svg);
+}
+.cims-compare-check-wrap input[type=checkbox].cims-compare-check:focus-visible {
+	outline: 2px solid #F7AC11;
+	outline-offset: 2px;
+}
+
+.cims-compare-check-box { display: none; }
+
+
+
+/* CIMS-PRODUCT-COMPARE-QUOTE-02: persistent shared selection toolbar. */
+.cims-compare-bar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+	margin: 0 0 12px;
+	padding: 10px 14px;
+	background: #F4F5F6;
+	border: 1px solid #E1E4E8;
+	border-radius: 4px;
+}
+.cims-compare-bar[hidden] { display: none; }
+.cims-compare-bar-count { font-weight: 600; color: #000; }
+.cims-compare-btn.btn.btn-primary,
+.cims-quote-btn.btn.btn-primary {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	border: none;
+	border-radius: 4px;
+	padding: 8px 18px;
+	font-size: 0.95em;
+	cursor: pointer;
+}
+.cims-compare-btn.btn.btn-primary { background: #F7AC11; color: #000; }
+.cims-quote-btn.btn.btn-primary { background: #48BD92; color: #fff; }
+.cims-quote-btn.btn.btn-primary:hover:not([disabled]) { background: #3BA47D; color: #fff; }
+.cims-compare-btn[disabled],
+.cims-quote-btn[disabled] { background: #A4ACB3; color: #fff; opacity: 0.65; cursor: not-allowed; }
+.cims-compare-btn-icon { width: 18px; height: 18px; filter: brightness(0); }
+.cims-quote-native-proxy { display: none !important; }
+
+.cims-compare-clear {
+	background: transparent;
+	border: none;
+	color: #444;
+	text-decoration: underline;
+	cursor: pointer;
+	padding: 4px 6px;
+}
+.cims-compare-bar.is-quote-busy .cims-compare-clear { cursor: wait; opacity: 0.6; }
+.cims-compare-bar-notice { color: #B07400; font-size: 0.9em; flex-basis: 100%; }
+@media (max-width: 479px) {
+	.cims-compare-bar { gap: 8px; padding: 10px; }
+	.cims-compare-btn.btn.btn-primary,
+	.cims-quote-btn.btn.btn-primary { padding: 8px 12px; font-size: 0.9em; }
+}
+
+
+/* Nearly-full-screen modal. */
+body.cims-compare-open { overflow: hidden; }
+.cims-compare-modal {
+	position: fixed;
+	inset: 0;
+	z-index: 99999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+.cims-compare-modal[hidden] { display: none; }
+.cims-compare-modal-overlay {
+	position: absolute;
+	inset: 0;
+	background: rgba(0,0,0,0.55);
+}
+.cims-compare-modal-dialog {
+	position: relative;
+	width: 96vw;
+	height: 94vh;
+	max-width: 1600px;
+	background: #fff;
+	border-radius: 6px;
+	box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+.cims-compare-modal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 14px 20px;
+	border-bottom: 1px solid #E1E4E8;
+	background: #F7AC11;
+}
+.cims-compare-modal-title {
+	margin: 0;
+	font-size: 1.3em;
+	color: #000;
+}
+.cims-compare-modal-close {
+	background: transparent;
+	border: none;
+	cursor: pointer;
+	line-height: 0;
+	padding: 4px;
+}
+.cims-compare-modal-close img { width: 22px; height: 22px; filter: brightness(0); }
+
+.cims-compare-modal-body {
+	flex: 1 1 auto;
+	overflow: auto;
+	padding: 0;
+	-webkit-overflow-scrolling: touch;
+}
+.cims-compare-loading,
+.cims-compare-error,
+.cims-compare-empty {
+	padding: 40px 20px;
+	text-align: center;
+	color: #444;
+}
+
+/* Transposed comparison table. */
+.cims-compare-table {
+	width: 100%;
+	border-collapse: collapse;
+	table-layout: fixed;
+}
+.cims-compare-table th,
+.cims-compare-table td {
+	border: 1px solid #E1E4E8;
+	padding: 12px 14px;
+	vertical-align: middle;
+	text-align: center;
+	word-break: break-word;
+}
+.cims-compare-table .cims-compare-row-label {
+	text-align: left;
+	background: #EEEEEE;
+	font-weight: 600;
+	color: #000;
+	width: 220px;
+	position: sticky;
+	left: 0;
+	z-index: 1;
+}
+.cims-compare-row-title .cims-compare-cell-title a {
+	font-weight: 600;
+	color: #B07400;
+}
+
+.cims-compare-row:nth-of-type(even) .cims-compare-cell { background: #FAFAFA; }
+.cims-compare-img { max-width: 140px; max-height: 140px; height: auto; width: auto; }
+.cims-compare-noimg,
+.cims-compare-empty-val { color: #B0B0B0; }
+
+@media (max-width: 767.98px) {
+	.cims-compare-modal-dialog { width: 100vw; height: 100vh; border-radius: 0; }
+	.cims-compare-table .cims-compare-row-label { width: 120px; }
+	.cims-compare-img { max-width: 90px; max-height: 90px; }
+}
+
+/* ===================================================================
+   CIMS-WCF-SUPERVISOR-NOTICE-HIDE-01 (2026-06-12): suppress Barn2 WCF's
+   admin/store-manager-only "supervisor" warning bar (the yellow
+   `.wcf-supervisor-message` element). It is shown ONLY to logged-in
+   admins/store managers (gated by current_user_can('manage_options'|
+   'manage_woocommerce') in WCF's Display.php) — customers never see it.
+   On Climax it false-positives on "filters are using the same data
+   source" because the imperial/metric (in/mm) split intentionally shares
+   one taxonomy per filter (Bore in/mm, Width in/mm, …), and on the
+   "same filter group used multiple times" sibling warning. Both are
+   known/by-design here and are pure admin noise, so hide the container
+   (covers both messages). First-party CSS only — NO Barn2 source edit,
+   so it survives plugin updates; the WCF "needs reindex" prompt is a
+   separate element and is NOT affected. Reversible: delete this rule.
+   =================================================================== */
+.wcf-supervisor-message { display: none !important; }
+
+
+/* CIMS-WCF-2-COMPAT-01 (2026-08-18): WCF 2.x uses a portal-rendered active
+   filter container and a `.wcf-group` root. IMS macro pages keep their own chip
+   toolbar, so suppress only Barn2's duplicate result controls in that scope. */
+.macro_filter_sidebar .wcf-active-filters-container {
+    display: none !important;
+}
+.macro_filter_sidebar .cims-wcf-v2-macro-loop {
+    min-height: 1px;
+}
